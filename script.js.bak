@@ -1,0 +1,1672 @@
+// 獲取canvas元素和上下文
+// Get canvas element and context
+const canvas = document.getElementById('lensCanvas');
+const ctx = canvas.getContext('2d');
+
+// 定义全局变量
+// Define global variables
+const pixelsPerCm = 20; // 每厘米对应的像素数 // Pixels per centimeter
+const studentHeight = 80; // 学生图像高度 // Student image height
+const arrowHeight = 80; // 箭头高度 // Arrow height
+
+// 設置canvas的尺寸以匹配其顯示尺寸
+// Set canvas dimensions to match display size
+function resizeCanvas() {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    draw(); // 當調整大小時重新繪製 // Redraw when resizing
+}
+
+// 頁面加載和窗口調整大小時調整canvas尺寸
+// Adjust canvas size on page load and window resize
+window.addEventListener('load', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
+
+// 定義模擬器的狀態
+// Define simulator state
+const state = {
+    objectType: 'arrow', // 'student' 或 'arrow' // 'student' or 'arrow'
+    objectDistance: 10.0, // 更新为10.0厘米 // Updated to 10.0 cm
+    focalLength: 5.0, // 保持焦距为5.0厘米 // Keep focal length at 5.0 cm
+    lensPosition: -0.4, // 更新透镜位置为-0.4厘米 // Updated lens position to -0.4 cm
+    objectPosition: -10.4, // 物体的绝对位置（相对于-0.4的透镜位置） // Object's absolute position (relative to lens at -0.4)
+    rules: {
+        rule1: true, // 平行光線→經過焦點 // Parallel ray→Through focus
+        rule2: true, // 通過中心的光線 // Ray through center
+        rule3: true  // 經過焦點→平行光線 // Through focus→Parallel ray
+    },
+    showGrid: true,
+    showMeasurements: true,
+    showImage: true // 顯示像 // Show image
+};
+
+// 計算像距，使用薄透鏡方程: 1/f = 1/p + 1/q
+// Calculate image distance using thin lens equation: 1/f = 1/p + 1/q
+function calculateImageDistance(objectDistance, focalLength) {
+    if (objectDistance === 0) {
+        return Infinity; // 物體在透鏡上時，像距無窮大 // When object is on the lens, image distance is infinity
+    }
+    if (objectDistance === focalLength) {
+        return Infinity; // 物距等於焦距時，像距無窮大 // When object distance equals focal length, image distance is infinity
+    }
+    
+    // 薄透鏡方程 1/f = 1/u + 1/v → v = uf/(u-f)
+    // 根據物體位置（相對於透鏡）計算像距
+    
+    let result;
+    // 物體在右側時的處理 (u < 0)
+    if (objectDistance < 0) {
+        // 將物距轉為正值進行計算，但保持正確的物理意義
+        const absObjectDistance = Math.abs(objectDistance);
+        
+        // 使用標準薄透鏡公式
+        result = -(focalLength * absObjectDistance) / (absObjectDistance - focalLength);
+    } else {
+        // 物體在左側，常規計算
+        result = (objectDistance * focalLength) / (objectDistance - focalLength);
+    }
+    
+    // 確保結果精確到0.1厘米
+    return parseFloat((Math.round(result * 10) / 10).toFixed(1));
+}
+
+// 計算放大率: m = -q/p
+// Calculate magnification: m = -q/p
+function calculateMagnification(objectDistance, imageDistance) {
+    // 物距為0時，放大率為無窮大
+    if (objectDistance === 0) {
+        return Infinity;
+    }
+    
+    // 特殊情况：像距为无穷大（物距等于焦距）
+    if (!isFinite(imageDistance)) {
+        return Infinity; // 放大率为无穷大
+    }
+    
+    // 放大率計算統一使用公式 m = -v/u (其中v為像距, u為物距)
+    // 不管物體在哪一側，統一使用 m = -v/u 公式
+    return -imageDistance / objectDistance;
+}
+
+// 確定像的類型
+function determineImageType(imageDistance, magnification) {
+    let type = [];
+    
+    // 物距為0（物體在透鏡上）或物距等於焦距時，像距為無窮大
+    if (!isFinite(imageDistance) || state.objectDistance === 0) {
+        type.push('實像 (Real Image)');
+        type.push('無窮遠 (Infinity)');
+        return type.join(', ');
+    }
+    
+    // 實像/虛像判斷
+    // 物體在右側時，根據物距和焦距關係判斷
+    // 物體在左側時，根據像距符號判斷
+    if (state.objectDistance < 0) { // 物體在右側
+        if (Math.abs(state.objectDistance) < state.focalLength) {
+            type.push('虛像 (Virtual Image)');
+        } else {
+            type.push('實像 (Real Image)');
+        }
+    } else { // 物體在左側
+        if (imageDistance < 0) {
+            type.push('虛像 (Virtual Image)');
+        } else {
+            type.push('實像 (Real Image)');
+        }
+    }
+    
+    // 放大/縮小判斷 - 使用放大率絕對值
+    const epsilon = 0.01; // 允許1%的誤差，原來是5%
+    if (Math.abs(Math.abs(magnification) - 1) < epsilon) {
+        type.push('等大 (Same Size)');
+    } else if (Math.abs(magnification) > 1) {
+        type.push('放大 (Magnified)');
+    } else {
+        type.push('縮小 (Diminished)');
+    }
+    
+    // 正立/倒立判斷 - 通過放大率符號判斷
+    // 放大率為正表示正立，為負表示倒立
+    if (magnification > 0) {
+        type.push('正立 (Erect)');
+    } else {
+        type.push('倒立 (Inverted)');
+    }
+    
+    return type.join(', ');
+}
+
+// 更新測量數據顯示
+// Update measurement data display
+function updateMeasurements() {
+    // 如果測量功能已關閉，則不更新測量數據
+    // Don't update measurement data if measurement feature is turned off
+    if (!state.showMeasurements) {
+        return;
+    }
+    
+    // 根據透鏡位置和物體位置計算物距，确保精确到0.1厘米
+    state.objectDistance = parseFloat((Math.round((state.lensPosition - state.objectPosition) * 10) / 10).toFixed(1));
+    
+    // 确保像距精确到0.1厘米
+    const rawImageDistance = calculateImageDistance(state.objectDistance, state.focalLength);
+    const imageDistance = parseFloat((Math.round(rawImageDistance * 10) / 10).toFixed(1));
+    
+    const magnification = calculateMagnification(state.objectDistance, imageDistance);
+    const imageType = determineImageType(imageDistance, magnification);
+    
+    // 显示物距，负值表示物体在透镜右侧
+    // Display object distance, negative value indicates object is on the right side of lens
+    document.getElementById('objectDistance').textContent = state.objectDistance.toFixed(1) + ' cm';
+    
+    // 显示像距，正值表示实像，负值表示虚像（符合物理标准）
+    // Display image distance, positive value indicates real image, negative indicates virtual image (follows physics standards)
+    document.getElementById('imageDistance').textContent = isFinite(imageDistance) ? 
+        imageDistance.toFixed(1) + ' cm' : '無窮遠 (Infinity)';
+    
+    // 显示放大率（取绝对值，让数值更直观）
+    // Display magnification (using absolute value for more intuitive reading)
+    document.getElementById('magnification').textContent = isFinite(magnification) ? 
+        Math.abs(magnification).toFixed(2) + 'x' : '∞';
+    
+    // 显示像类型
+    // Display image nature
+    document.getElementById('imageType').textContent = imageType;
+    
+    // 更新底部信息
+    // Update bottom information
+    document.getElementById('focalLengthValue').textContent = state.focalLength.toFixed(1) + ' cm';
+    
+    // 更新像类型指示器
+    const virtualImageIndicator = document.getElementById('virtualImageIndicator');
+    const realImageIndicator = document.getElementById('realImageIndicator');
+    
+    if (imageType.includes('虛像')) {
+        virtualImageIndicator.style.display = 'block';
+        realImageIndicator.style.display = 'none';
+    } else if (imageType.includes('實像')) {
+        virtualImageIndicator.style.display = 'none';
+        realImageIndicator.style.display = 'block';
+    } else {
+        virtualImageIndicator.style.display = 'none';
+        realImageIndicator.style.display = 'none';
+    }
+}
+
+// 繪製函數
+// Drawing function
+function draw() {
+    // 清除canvas
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 如果啟用，繪製網格
+    // Draw grid if enabled
+    if (state.showGrid) {
+        drawGrid();
+    }
+    
+    // 繪製光軸
+    // Draw optical axis
+    drawOpticalAxis();
+    
+    // 繪製透鏡
+    // Draw lens
+    drawLens();
+    
+    // 繪製焦點標記
+    // Draw focal point markers
+    drawFocalPoints();
+    
+    // 繪製物體
+    // Draw object
+    drawObject();
+    
+    // 計算像的位置和大小
+    // Calculate image position and size
+    const imageDistance = calculateImageDistance(state.objectDistance, state.focalLength);
+    const magnification = calculateMagnification(state.objectDistance, imageDistance);
+    
+    // 繪製像
+    // Draw image
+    drawImage(imageDistance, magnification);
+    
+    // 繪製光線
+    // Draw rays
+    drawRays(imageDistance);
+    
+    // 更新測量數據
+    // Update measurement data
+    updateMeasurements();
+    
+    // 控制測量數據面板的顯示與隱藏
+    // Control measurement panel visibility
+    const measurementPanel = document.getElementById('image-type-indicator');
+    if (measurementPanel) {
+        measurementPanel.style.display = state.showMeasurements ? 'block' : 'none';
+    }
+}
+
+// 繪製網格
+// Draw grid
+function drawGrid() {
+    const gridSize = 20; // 網格單元大小，對應1厘米 // Grid unit size, corresponds to 1 cm
+    ctx.strokeStyle = '#e0e0e0';
+    ctx.lineWidth = 0.5;
+    
+    // 垂直線
+    // Vertical lines
+    for (let x = 0; x <= canvas.width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+    }
+    
+    // 水平線
+    // Horizontal lines
+    for (let y = 0; y <= canvas.height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+}
+
+// 繪製光軸
+// Draw optical axis
+function drawOpticalAxis() {
+    const axisY = canvas.height / 2;
+    
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, axisY);
+    ctx.lineTo(canvas.width, axisY);
+    ctx.stroke();
+}
+
+// 繪製透鏡
+// Draw lens
+function drawLens() {
+    const lensHeight = canvas.height * 0.7;
+    const axisY = canvas.height / 2;
+    const lensX = canvas.width / 2 + state.lensPosition * pixelsPerCm; // 使用pixelsPerCm
+    
+    // 繪製透鏡
+    // Draw lens
+    ctx.strokeStyle = '#4a69bd';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    
+    // 修改為更明顯的凸透鏡形狀
+    // Modified to a more obvious convex lens shape
+    // 左弧
+    // Left arc
+    ctx.moveTo(lensX, axisY - lensHeight / 2);
+    ctx.quadraticCurveTo(
+        lensX - 30, axisY,
+        lensX, axisY + lensHeight / 2
+    );
+    
+    // 右弧
+    // Right arc
+    ctx.moveTo(lensX, axisY - lensHeight / 2);
+    ctx.quadraticCurveTo(
+        lensX + 30, axisY,
+        lensX, axisY + lensHeight / 2
+    );
+    
+    ctx.stroke();
+}
+
+// 繪製焦點標記
+// Draw focal point markers
+function drawFocalPoints() {
+    // 計算透鏡在畫布上的x座標
+    // Calculate the x-coordinate of the lens on the canvas
+    const lensX = canvas.width / 2 + pixelsPerCm * state.lensPosition;
+    
+    // 繪製焦距標記 (左側)
+    // Draw focal point marker (left side)
+    const leftFocalX = lensX - pixelsPerCm * state.focalLength;
+    
+    // 使用时间创建脉冲效果
+    const pulseSize = 5 + Math.sin(Date.now() / 300) * 1.5;
+    
+    ctx.beginPath();
+    ctx.arc(leftFocalX, canvas.height / 2, pulseSize, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 0.7)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(229, 62, 62, 1)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    // 添加焦点脉冲效果的阴影
+    ctx.shadowColor = 'rgba(229, 62, 62, 0.6)';
+    ctx.shadowBlur = 8 + Math.sin(Date.now() / 300) * 3;
+    ctx.beginPath();
+    ctx.arc(leftFocalX, canvas.height / 2, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 1)';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    // 繪製左側焦點標籤
+    // Draw left focal point label
+    ctx.font = '12px Arial';
+    ctx.fillStyle = '#e53e3e';
+    ctx.textAlign = 'center';
+    ctx.fillText('F', leftFocalX, canvas.height / 2 - 15);
+    
+    // 繪製焦距標記 (右側)
+    // Draw focal point marker (right side)
+    const rightFocalX = lensX + pixelsPerCm * state.focalLength;
+    
+    ctx.beginPath();
+    ctx.arc(rightFocalX, canvas.height / 2, pulseSize, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 0.7)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(229, 62, 62, 1)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    // 添加焦点脉冲效果的阴影
+    ctx.shadowColor = 'rgba(229, 62, 62, 0.6)';
+    ctx.shadowBlur = 8 + Math.sin(Date.now() / 300) * 3;
+    ctx.beginPath();
+    ctx.arc(rightFocalX, canvas.height / 2, 3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 1)';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    
+    // 繪製右側焦點標籤
+    // Draw right focal point label
+    ctx.fillStyle = '#e53e3e';
+    ctx.fillText("F'", rightFocalX, canvas.height / 2 - 15);
+    
+    // 绘制2F点(左侧)
+    // Draw 2F point (left side)
+    const left2FX = lensX - pixelsPerCm * state.focalLength * 2;
+    ctx.beginPath();
+    ctx.arc(left2FX, canvas.height / 2, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(229, 62, 62, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 绘制左侧2F点标签
+    ctx.fillStyle = '#e53e3e';
+    ctx.textAlign = 'center';
+    ctx.fillText("2F", left2FX, canvas.height / 2 - 15);
+    
+    // 绘制2F点(右侧)
+    // Draw 2F point (right side)
+    const right2FX = lensX + pixelsPerCm * state.focalLength * 2;
+    ctx.beginPath();
+    ctx.arc(right2FX, canvas.height / 2, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(252, 129, 129, 0.6)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(229, 62, 62, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 绘制右侧2F点标签
+    ctx.fillStyle = '#e53e3e';
+    ctx.textAlign = 'center';
+    ctx.fillText("2F'", right2FX, canvas.height / 2 - 15);
+    
+    // 恢復陰影設置
+    // Reset shadow settings
+    ctx.shadowBlur = 0;
+    
+    // 繪製焦平面（虛線）
+    // Draw focal planes (dashed lines)
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(leftFocalX, canvas.height / 4);
+    ctx.lineTo(leftFocalX, canvas.height * 3 / 4);
+    ctx.strokeStyle = 'rgba(203, 213, 224, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.moveTo(rightFocalX, canvas.height / 4);
+    ctx.lineTo(rightFocalX, canvas.height * 3 / 4);
+    ctx.stroke();
+    
+    // 重置虛線設置
+    // Reset dashed line settings
+    ctx.setLineDash([]);
+}
+
+// 繪製物體
+// Draw object
+function drawObject() {
+    const axisY = canvas.height / 2;
+    const centerX = canvas.width / 2;
+    // 確保物體位置精確到0.1厘米
+    state.objectPosition = parseFloat((Math.round(state.objectPosition * 10) / 10).toFixed(1));
+    // 使用絕對位置計算物體的X座標，而不是相對於透鏡
+    const objectX = centerX + state.objectPosition * pixelsPerCm; // 轉換為像素
+    const objectHeight = state.objectType === 'student' ? studentHeight : arrowHeight;
+    
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 2;
+    
+    if (state.objectType === 'arrow') {
+        // 繪製箭頭物體
+        ctx.beginPath();
+        ctx.moveTo(objectX, axisY);
+        ctx.lineTo(objectX, axisY - objectHeight);
+        ctx.lineTo(objectX - 10, axisY - objectHeight + 15);
+        ctx.moveTo(objectX, axisY - objectHeight);
+        ctx.lineTo(objectX + 10, axisY - objectHeight + 15);
+        ctx.stroke();
+    } else {
+        // 繪製學生物體（簡化為人形）
+        ctx.beginPath();
+        // 頭部
+        ctx.arc(objectX, axisY - objectHeight + 15, 15, 0, Math.PI * 2);
+        // 身體
+        ctx.moveTo(objectX, axisY - objectHeight + 30);
+        ctx.lineTo(objectX, axisY - 20);
+        // 手臂
+        ctx.moveTo(objectX - 20, axisY - objectHeight + 45);
+        ctx.lineTo(objectX, axisY - objectHeight + 40);
+        ctx.lineTo(objectX + 20, axisY - objectHeight + 45);
+        // 腿
+        ctx.moveTo(objectX, axisY - 20);
+        ctx.lineTo(objectX - 15, axisY);
+        ctx.moveTo(objectX, axisY - 20);
+        ctx.lineTo(objectX + 15, axisY);
+        ctx.stroke();
+    }
+    
+    // 繪製物體標記點
+    ctx.fillStyle = '#2ecc71';
+    ctx.beginPath();
+    ctx.arc(objectX, axisY, 5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 標記物體高度
+    ctx.setLineDash([5, 3]);
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(objectX, axisY);
+    ctx.lineTo(objectX, axisY - objectHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // 在物體底部顯示物距數值，增強顯示效果
+    const lensX = centerX + state.lensPosition * pixelsPerCm;
+    ctx.fillStyle = '#2ecc71';
+    ctx.font = 'bold 14px Arial';
+    const objectDistance = state.objectDistance;
+    const displayText = `u = ${objectDistance.toFixed(1)} cm`;
+    
+    // 決定文字位置，避免重疊
+    const textX = objectX;
+    const textY = axisY + 25; // 在光軸下方顯示
+    
+    // 繪製背景使文字更清晰
+    const textWidth = ctx.measureText(displayText).width;
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; // 使用綠色背景，更好區分
+    ctx.fillRect(textX - textWidth/2 - 5, textY - 14, textWidth + 10, 20);
+    
+    // 繪製文字
+    ctx.fillStyle = '#2ecc71';
+    ctx.textAlign = 'center';
+    ctx.fillText(displayText, textX, textY);
+    
+    // 添加小標籤說明
+    ctx.font = '12px Arial';
+    ctx.fillText('物距/Object Distance', textX, textY + 16);
+}
+
+// 繪製像
+// Draw image
+function drawImage(imageDistance, magnification) {
+    // 如果不顯示像，或像距為無窮大，或物距為0，則不繪製像
+    if (!state.showImage || !isFinite(imageDistance) || state.objectDistance === 0) return;
+
+    const axisY = canvas.height / 2;
+    const centerX = canvas.width / 2;
+    const lensX = centerX + state.lensPosition * pixelsPerCm;
+    const imageX = lensX + imageDistance * pixelsPerCm; // 轉換為像素
+    const objectHeight = state.objectType === 'student' ? studentHeight : arrowHeight;
+    const imageHeight = objectHeight * Math.abs(magnification); // 像高度
+    
+    ctx.strokeStyle = '#3498db';
+    ctx.lineWidth = 2;
+    
+    // 檢查物體是否在透鏡右側
+    const isObjectOnRight = state.objectDistance < 0;
+    
+    // 判斷是否為虛像
+    let isVirtualImage;
+    
+    if (isObjectOnRight) {
+        // 物體在右側
+        // 使用物距和焦距的關係判斷：如果物體在焦點內側(|u| < f)，則為虛像
+        isVirtualImage = Math.abs(state.objectDistance) < state.focalLength;
+    } else {
+        // 物體在左側
+        // 像距為負時為虛像
+        isVirtualImage = imageDistance < 0;
+    }
+    
+    // 設置虛線或實線
+    if (isVirtualImage) {
+        ctx.setLineDash([5, 3]);  // 虛像使用虛線
+    } else {
+        ctx.setLineDash([]);  // 實像使用實線
+    }
+
+    if (state.objectType === 'arrow') {
+        // 繪製箭頭像
+        ctx.beginPath();
+        
+        // 使用放大率符號直接判斷像是正立還是倒立
+        if (magnification < 0) {
+            // 倒立像
+            ctx.moveTo(imageX, axisY);
+            ctx.lineTo(imageX, axisY + imageHeight);
+            // 箭頭指向下方
+            ctx.lineTo(imageX - 10, axisY + imageHeight - 15);
+            ctx.moveTo(imageX, axisY + imageHeight);
+            ctx.lineTo(imageX + 10, axisY + imageHeight - 15);
+        } else {
+            // 正立像
+            ctx.moveTo(imageX, axisY);
+            ctx.lineTo(imageX, axisY - imageHeight);
+            // 箭頭指向上方
+            ctx.lineTo(imageX - 10, axisY - imageHeight + 15);
+            ctx.moveTo(imageX, axisY - imageHeight);
+            ctx.lineTo(imageX + 10, axisY - imageHeight + 15);
+        }
+        
+        ctx.stroke();
+    } else {
+        // 繪製學生物體像（人形）
+        ctx.beginPath();
+        
+        // 使用放大率符號直接判斷像是正立還是倒立
+        if (magnification < 0) {
+            // 倒立像 - 向下繪製
+            // 頭部
+            ctx.arc(imageX, axisY + imageHeight - 15 * Math.abs(magnification) / objectHeight * 40, 
+                  15 * Math.abs(magnification) / objectHeight * 40, 0, Math.PI * 2);
+            // 身體
+            ctx.moveTo(imageX, axisY + imageHeight - 30 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX, axisY + 20 * Math.abs(magnification) / objectHeight * 40);
+            // 手臂
+            ctx.moveTo(imageX - 20 * Math.abs(magnification) / objectHeight * 40, 
+                     axisY + imageHeight - 45 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX, axisY + imageHeight - 40 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX + 20 * Math.abs(magnification) / objectHeight * 40, 
+                     axisY + imageHeight - 45 * Math.abs(magnification) / objectHeight * 40);
+            // 腿
+            ctx.moveTo(imageX, axisY + 20 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX - 15 * Math.abs(magnification) / objectHeight * 40, axisY);
+            ctx.moveTo(imageX, axisY + 20 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX + 15 * Math.abs(magnification) / objectHeight * 40, axisY);
+        } else {
+            // 正立像
+            // 頭部
+            ctx.arc(imageX, axisY - imageHeight + 15 * Math.abs(magnification) / objectHeight * 40, 
+                  15 * Math.abs(magnification) / objectHeight * 40, 0, Math.PI * 2);
+            // 身體
+            ctx.moveTo(imageX, axisY - imageHeight + 30 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX, axisY - 20 * Math.abs(magnification) / objectHeight * 40);
+            // 手臂
+            ctx.moveTo(imageX - 20 * Math.abs(magnification) / objectHeight * 40, 
+                     axisY - imageHeight + 45 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX, axisY - imageHeight + 40 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX + 20 * Math.abs(magnification) / objectHeight * 40, 
+                     axisY - imageHeight + 45 * Math.abs(magnification) / objectHeight * 40);
+            // 腿
+            ctx.moveTo(imageX, axisY - 20 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX - 15 * Math.abs(magnification) / objectHeight * 40, axisY);
+            ctx.moveTo(imageX, axisY - 20 * Math.abs(magnification) / objectHeight * 40);
+            ctx.lineTo(imageX + 15 * Math.abs(magnification) / objectHeight * 40, axisY);
+        }
+        
+        ctx.stroke();
+    }
+    
+    // 繪製像標記點
+    ctx.fillStyle = '#3498db';
+    ctx.beginPath();
+    ctx.arc(imageX, axisY, 5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 標記像高度
+    ctx.setLineDash([5, 3]);
+    ctx.strokeStyle = '#3498db';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    
+    if (magnification < 0) {
+        // 倒立像
+        ctx.moveTo(imageX, axisY);
+        ctx.lineTo(imageX, axisY + imageHeight);
+    } else {
+        // 正立像
+        ctx.moveTo(imageX, axisY);
+        ctx.lineTo(imageX, axisY - imageHeight);
+    }
+    
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // 在像底部顯示像距數值
+    ctx.fillStyle = '#3498db';
+    ctx.font = 'bold 14px Arial';
+    const displayText = `v = ${imageDistance.toFixed(1)} cm`;
+    
+    // 決定文字位置，避免重疊
+    const textX = imageX;
+    const textY = axisY + 25; // 在光軸下方顯示
+    
+    // 繪製背景使文字更清晰
+    const textWidth = ctx.measureText(displayText).width;
+    ctx.fillStyle = 'rgba(52, 152, 219, 0.2)'; // 使用藍色背景，更好區分
+    ctx.fillRect(textX - textWidth/2 - 5, textY - 14, textWidth + 10, 20);
+    
+    // 繪製文字
+    ctx.fillStyle = '#3498db';
+    ctx.textAlign = 'center';
+    ctx.fillText(displayText, textX, textY);
+    
+    // 添加小標籤說明
+    ctx.font = '12px Arial';
+    ctx.fillText('像距/Image Distance', textX, textY + 16);
+}
+
+// 繪製光線
+// Draw rays
+function drawRays(imageDistance) {
+    // 當物距為0或像距無窮大時，不繪製光線
+    if (state.objectDistance === 0 || !isFinite(imageDistance)) return;
+    
+    // 計算透鏡在畫布上的x座標
+    // Calculate the x-coordinate of the lens on the canvas
+    const lensX = canvas.width / 2 + pixelsPerCm * state.lensPosition;
+    
+    // 計算物體頂點座標（使用畫布座標）
+    // Calculate object vertex coordinates (using canvas coordinates)
+    const objectTopX = canvas.width / 2 + pixelsPerCm * state.objectPosition;
+    const axisY = canvas.height / 2; // 光轴Y坐标
+    
+    const objectHeight = state.objectType === 'student' ? studentHeight : arrowHeight;
+    const objectTopY = canvas.height / 2 - objectHeight;
+    
+    // 計算像的位置和高度
+    // Calculate image position and height
+    const magnification = calculateMagnification(state.objectDistance, imageDistance);
+    const imageHeight = objectHeight * Math.abs(magnification);
+    const imageX = lensX + pixelsPerCm * imageDistance;
+    
+    // 根據放大率確定像的頂點y座標
+    // Determine the y-coordinate of the image vertex based on magnification
+    const imageIsInverted = magnification < 0;
+    const imageTopY = imageIsInverted ? 
+        canvas.height / 2 + imageHeight : // 倒立 (inverted)
+        canvas.height / 2 - imageHeight;  // 正立 (erect)
+    
+    // 光線顏色設置 - 根據像的類型
+    // Ray color settings - based on image nature
+    const isVirtualImage = (state.objectDistance < 0 && Math.abs(state.objectDistance) < state.focalLength) || 
+                          (state.objectDistance > 0 && imageDistance < 0);
+    
+    // 检查物体是否在透镜右侧
+    const isObjectOnRight = state.objectDistance < 0;
+    
+    const rayStrokeStyle = isVirtualImage ? 
+        'rgba(113, 128, 150, 0.7)' : // 虛像 Virtual image
+        'rgba(229, 62, 62, 0.7)';    // 實像 Real image
+    
+    // 計算實際的物體頂部和像頂部位置
+    const objectTop = objectTopY;
+    const imageTop = imageTopY;
+    
+    // 只有像距有限時才繪製光線
+    if (!isFinite(imageDistance)) return;
+    
+    // 添加辅助函数检查像是否在光轴上
+    function isImageOnAxis(imageTopY) {
+        return Math.abs(imageTopY - axisY) < 1;
+    }
+    
+    // 規則1: 平行光線→經過焦點
+    if (state.rules.rule1) {
+        const f1X = lensX + state.focalLength * pixelsPerCm; // 右焦點F
+        const f2X = lensX - state.focalLength * pixelsPerCm; // 左焦點F'
+        
+        ctx.strokeStyle = '#e74c3c'; // 紅色
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]); // 實線
+        ctx.beginPath();
+        
+        if (!isObjectOnRight) {
+            // 物體在左側 - 原邏輯
+            // 從物體頂部發出平行於光軸的光線
+            ctx.moveTo(objectTopX, objectTop);
+            ctx.lineTo(lensX, objectTop);
+            
+            // 光線通過透鏡後的路徑
+            if (!isVirtualImage) {
+                // 實像：平行光線必須穿過焦點
+                ctx.lineTo(f1X, axisY);
+                
+                // 從焦點延伸到像點（如果像點位於焦點後方）
+                if (imageX > f1X) {
+                    ctx.lineTo(imageX, imageTop);
+                }
+                ctx.stroke();
+                
+                // 物體到透鏡的箭頭
+                const arrowX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                drawArrow(objectTopX, objectTop, arrowX1, objectTop, '#e74c3c');
+                
+                // 透鏡右側到像點的箭頭
+                if (imageX > f1X) {
+                    const arrowX3 = f1X + (imageX - f1X) * 0.5;
+                    const arrowY3 = axisY + (imageTop - axisY) * 0.5;
+                    drawArrow(f1X, axisY, arrowX3, arrowY3, '#e74c3c');
+                } else {
+                    // 如果像點與焦點重合或在焦點前方，則箭頭指向焦點
+                    const arrowX2 = lensX + (f1X - lensX) * 0.5;
+                    const arrowY2 = objectTop + (axisY - objectTop) * 0.5;
+                    drawArrow(lensX, objectTop, arrowX2, arrowY2, '#e74c3c');
+                }
+            } else {
+                // 虛像：光線向焦點方向延伸，但被反向折射
+                // 透鏡右側的光線必須直接連到焦點，不管物距和焦距的關係
+                ctx.lineTo(f1X, axisY);
+     
+                // 計算從透鏡頂部到焦點的斜率
+                const slopeToF = (axisY - objectTop) / (f1X - lensX);
+                
+                // 延伸線的末端座標
+                const extendX = f1X + 150; // 延伸足夠遠的距離
+                const extendY = axisY + slopeToF * (extendX - f1X); // 沿著原方向延伸
+                
+                // 從焦點延伸直線
+                ctx.lineTo(extendX, extendY);
+                
+                // 繪製實線部分
+                ctx.stroke();
+                
+                // 添加虛線部分（從透鏡的穿透點到虛像頂部的虛線，不添加箭頭）
+                ctx.beginPath();
+                ctx.strokeStyle = '#e74c3c'; // 紅色
+                ctx.setLineDash([5, 3]); // 虛線
+                ctx.moveTo(lensX, objectTop);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置為實線
+                
+                // 物體到透鏡的箭頭
+                const arrowX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                drawArrow(objectTopX, objectTop, arrowX1, objectTop, '#e74c3c');
+                
+                // 透鏡右側的箭頭（實線部分）
+                const arrowX3 = f1X + 50;
+                const arrowY3 = axisY + slopeToF * 50;
+                drawArrow(f1X, axisY, arrowX3, arrowY3, '#e74c3c');
+                
+                // 虛線部分不添加箭頭
+            }
+        } else {
+            // 物體在右側 - 從物體頂部發出與光軸平行的光線
+            ctx.moveTo(objectTopX, objectTop);
+            ctx.lineTo(lensX, objectTop);
+            
+            // 計算從透鏡頂部到焦點的斜率（用於確定光線方向）
+            const slopeToF = (axisY - objectTop) / (f2X - lensX);
+            
+            // 從透鏡到左側焦點F2
+            ctx.lineTo(f2X, axisY);
+            
+            // 光線穿過透鏡後折射
+            if (Math.abs(state.objectDistance) < state.focalLength) {
+                // 物體在焦點內側，形成虛像
+                
+                // 從左焦點往左延伸，保持直線方向
+                const extendX = f2X - 200; // 向左延伸
+                // 計算延伸線的Y坐標，保持與透鏡-焦點線段相同的斜率
+                const extendY = axisY - slopeToF * (f2X - extendX);
+                ctx.lineTo(extendX, extendY);
+                ctx.stroke();
+                
+                // 添加虛線部分（從透鏡穿透點到虛像頂部的虛線，不添加箭頭）
+                ctx.beginPath();
+                ctx.strokeStyle = '#e74c3c'; // 紅色
+                ctx.setLineDash([5, 3]); // 虛線
+                ctx.moveTo(lensX, objectTop);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置為實線
+                
+                // 物體到透鏡的箭頭
+                const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, objectTop, '#e74c3c');
+                
+                // 透鏡到左側焦點的箭頭
+                const midX2 = lensX - (lensX - f2X) * 0.5;
+                const midY2 = objectTop + (axisY - objectTop) * 0.5;
+                drawArrow(lensX, objectTop, midX2, midY2, '#e74c3c');
+                
+                // 左側焦點向左延伸的箭頭，沿著原來的方向
+                const arrowX = f2X - 60;
+                const arrowY = axisY - slopeToF * 60;
+                drawArrow(f2X, axisY, arrowX, arrowY, '#e74c3c');
+                
+                // 虛線部分不添加箭頭
+            } else {
+                // 物體在焦點外側，形成實像
+                
+                // 如果像點在焦點之前，從焦點連到像點
+                if (imageX < f2X) {
+                    ctx.lineTo(imageX, imageTop);
+                } else {
+                    // 如果像點在焦點之後或重合，需要從焦點向左延伸
+                    const extendX = f2X - 200; // 向左延伸
+                    // 計算延伸線的Y坐標，保持與透鏡-焦點線段相同的斜率
+                    const extendY = axisY - slopeToF * (f2X - extendX);
+                    ctx.lineTo(extendX, extendY);
+                }
+                ctx.stroke();
+                
+                // 物體到透鏡的箭頭
+                const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, objectTop, '#e74c3c');
+                
+                // 透鏡到左側焦點的箭頭
+                const midX2 = lensX - (lensX - f2X) * 0.5;
+                const midY2 = objectTop + (axisY - objectTop) * 0.5;
+                drawArrow(lensX, objectTop, midX2, midY2, '#e74c3c');
+                
+                // 如果像點在焦點之前，添加從焦點到像點的箭頭
+                if (imageX < f2X) {
+                    const midX3 = f2X - (f2X - imageX) * 0.5;
+                    const midY3 = axisY + (imageTop - axisY) * 0.5;
+                    drawArrow(f2X, axisY, midX3, midY3, '#e74c3c');
+                } else {
+                    // 如果像點在焦點之後或重合，添加從焦點向左的箭頭，沿著原來的方向
+                    const arrowX = f2X - 60;
+                    const arrowY = axisY - slopeToF * 60;
+                    drawArrow(f2X, axisY, arrowX, arrowY, '#e74c3c');
+                }
+            }
+        }
+    }
+    
+    // 規則2: 通過中心的光線
+    if (state.rules.rule2) {
+        ctx.strokeStyle = '#27ae60'; // 綠色
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]); // 實線
+        
+        // 判断是否为虚像且物体距离小于焦距
+        const isWithinFocal = Math.abs(state.objectDistance) < state.focalLength;
+        
+        // 从物体顶部发出通过透镜中心的光线
+        ctx.beginPath();
+        ctx.moveTo(objectTopX, objectTop);
+        
+        // 如果物体在焦距内，使用虚线；否则使用实线
+        if (isVirtualImage && isWithinFocal) {
+            ctx.setLineDash([5, 3]); // 虚线
+        }
+        
+        ctx.lineTo(lensX, axisY);
+        
+        // 通過中心的光線不發生偏折，方向保持不變
+        // 計算直線方程斜率
+        const slope = (axisY - objectTop) / (lensX - objectTopX);
+        
+        // 判断是否为虚像
+        if (!isVirtualImage) {
+            // 實像情况: 实线从物体顶部经过透镜中心延伸到像顶部
+            ctx.beginPath();
+            ctx.moveTo(objectTopX, objectTop);
+            ctx.lineTo(lensX, axisY);
+            
+            if (isImageOnAxis(imageTop)) {
+                // 像点在光轴上，直接延伸到轴上对应位置
+                ctx.lineTo(imageX, axisY);
+            } else {
+                // 像点不在光轴上，延伸到像点顶部
+                ctx.lineTo(imageX, imageTop);
+            }
+            ctx.stroke();
+            
+            // 物體到透鏡中心的箭頭
+            if (objectTopX < lensX) { // 物體在左側
+                const midX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+            } else { // 物體在右側
+                const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+            }
+            
+            // 透鏡中心到像的箭頭 (實線部分)
+            if (imageX > lensX) { // 像在右側
+                const midX2 = lensX + (imageX - lensX) * 0.5;
+                const midY2 = axisY + (imageTop - axisY) * 0.5;
+                drawArrow(lensX, axisY, midX2, midY2, '#27ae60');
+            } else { // 像在左側
+                const midX2 = lensX - (lensX - imageX) * 0.5;
+                const midY2 = axisY + (imageTop - axisY) * 0.5;
+                drawArrow(lensX, axisY, midX2, midY2, '#27ae60');
+            }
+        } else {
+            // 虛像情况
+            
+            // 计算光线实际延伸方向的斜率
+            const slope = (axisY - objectTop) / (lensX - objectTopX);
+            
+            if (isWithinFocal) {
+                // 物体在焦距内: 物体到透镜中心为实线且有箭头，透镜中心到像顶端为虚线且没有箭头
+                // 1. 先绘制物体到透镜中心的实线部分
+                ctx.beginPath();
+                ctx.setLineDash([]); // 实线
+                ctx.moveTo(objectTopX, objectTop);
+                ctx.lineTo(lensX, axisY);
+                ctx.stroke();
+                
+                // 2. 添加物体到透镜中心的箭头
+                if (objectTopX < lensX) { // 物体在左侧
+                    const midX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                    const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                    drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+                } else { // 物体在右侧
+                    const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                    const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                    drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+                }
+                
+                // 3. 绘制透镜中心到像顶端的虚线部分，不添加箭头
+                ctx.beginPath();
+                ctx.strokeStyle = '#27ae60'; // 保持绿色
+                ctx.setLineDash([5, 3]); // 虚线
+                ctx.moveTo(lensX, axisY);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置为实线
+            } else {
+                // 物体不在焦距内: 按原逻辑处理
+                // 从物体顶部发出通过透镜中心的光线
+                ctx.beginPath();
+                ctx.setLineDash([]); // 实线
+                ctx.moveTo(objectTopX, objectTop);
+                ctx.lineTo(lensX, axisY);
+                
+                // 计算光线实际延伸的方向
+                let extendX;
+                if (imageX < lensX) { // 虚像在左侧 (物体在右侧)
+                    extendX = lensX - 300; // 向左延伸
+                } else { // 虚像在右侧 (物体在左侧)
+                    extendX = lensX + 300; // 向右延伸
+                }
+                const extendY = axisY + slope * (extendX - lensX); // 使用正确的斜率计算延伸点Y坐标
+                
+                // 绘制实线部分 (从透镜中心到实际延伸方向)
+                ctx.lineTo(extendX, extendY);
+                ctx.stroke();
+                
+                // 物体到透镜中心的箭头
+                if (objectTopX < lensX) { // 物体在左侧
+                    const midX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                    const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                    drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+                } else { // 物体在右侧
+                    const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                    const midY1 = objectTop + (axisY - objectTop) * 0.5;
+                    drawArrow(objectTopX, objectTop, midX1, midY1, '#27ae60');
+                }
+                
+                // 在实线部分添加箭头 (光线实际延伸方向)
+                if (imageX < lensX) { // 向左延伸
+                    const arrowX = lensX - 100;
+                    const arrowY = axisY + slope * (arrowX - lensX);
+                    drawArrow(lensX, axisY, arrowX, arrowY, '#27ae60');
+                } else { // 向右延伸
+                    const arrowX = lensX + 100;
+                    const arrowY = axisY + slope * (arrowX - lensX);
+                    drawArrow(lensX, axisY, arrowX, arrowY, '#27ae60');
+                }
+                
+                // 绘制虚线部分 (从透镜中心到虚像顶部，不添加箭头)
+                ctx.beginPath();
+                ctx.strokeStyle = '#27ae60'; // 保持绿色
+                ctx.setLineDash([5, 3]); // 虚线
+                ctx.moveTo(lensX, axisY);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置为实线
+            }
+        }
+    }
+    
+    // 規則3: 經過焦點→平行光線
+    if (state.rules.rule3) {
+        const f1X = lensX + state.focalLength * pixelsPerCm; // 右焦點F
+        const f2X = lensX - state.focalLength * pixelsPerCm; // 左焦點F'
+        
+        ctx.strokeStyle = '#f39c12'; // 橙色
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]); // 實線
+        ctx.beginPath();
+        
+        if (!isObjectOnRight) {
+            // 物體在左側 - 原邏輯
+            // 從物體頂部發出經過第二焦點的光線
+            ctx.moveTo(objectTopX, objectTop);
+            
+            // 計算通過焦點的光線方向和穿過透鏡的點
+            let throughY;
+            
+            if (objectTopX <= f2X) {
+                // 如果物體在焦點之前或重合，使用不同的方法計算
+                ctx.lineTo(f2X, axisY); // 先連到焦點
+                
+                // 計算從焦點到透鏡的直線方程
+                const slopeAfterF = (objectTop - axisY) / (objectTopX - f2X);
+                throughY = axisY + slopeAfterF * (lensX - f2X);
+                
+                // 從焦點連到透鏡
+                ctx.lineTo(lensX, throughY);
+            } else {
+                // 計算從物體頂部到焦點的方向
+                const dirX = f2X - objectTopX;
+                const dirY = axisY - objectTop;
+                
+                // 如果物體在焦點之後，需要延長直線
+                const slope = dirY / dirX;
+                throughY = objectTop + slope * (lensX - objectTopX);
+                
+                // 連接到透鏡
+                ctx.lineTo(lensX, throughY);
+            }
+            
+            // 光線通過透鏡後平行於光軸
+            if (!isVirtualImage) {
+                // 實像：光線平行於光軸延伸到像點
+                ctx.lineTo(imageX, throughY);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                
+                // 繪製物體到透鏡的箭頭
+                const midX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                const midY1 = objectTop + (throughY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#f39c12');
+                
+                // 繪製水平光線部分的箭頭
+                const midX2 = lensX + (imageX - lensX) * 0.5;
+                drawArrow(lensX, throughY, midX2, throughY, '#f39c12');
+                
+                // 如果像點不在同一水平線上，添加垂直箭頭
+                if (Math.abs(throughY - imageTop) > 1) {
+                    const midY2 = throughY + (imageTop - throughY) * 0.5;
+                    drawArrow(imageX, throughY, imageX, midY2, '#f39c12');
+                }
+            } else {
+                // 虛像：光線平行於光軸往右延伸，但似乎來自虛像
+                const extendX = lensX + 200; // 足夠遠
+                ctx.lineTo(extendX, throughY);
+                ctx.stroke();
+                
+                // 從透鏡延伸的虛線到虛像
+                ctx.beginPath();
+                ctx.strokeStyle = '#f39c12'; // 橙色
+                ctx.setLineDash([5, 3]); // 虛線
+                ctx.moveTo(lensX, throughY);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置為實線
+                
+                // 繪製物體到透鏡的箭頭
+                const midX1 = objectTopX + (lensX - objectTopX) * 0.5;
+                const midY1 = objectTop + (throughY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#f39c12');
+                
+                // 繪製水平光線部分的箭頭（實線部分）
+                const midX2 = lensX + 60;
+                drawArrow(lensX, throughY, midX2, throughY, '#f39c12');
+                
+                // 虛線部分不添加箭頭
+            }
+        } else {
+            // 物體在右側 - 從物體頂部出發
+            
+            // 計算光線穿過透鏡的位置
+            const slopeToF = (axisY - objectTop) / (f1X - objectTopX);
+            const throughY = objectTop + slopeToF * (lensX - objectTopX);
+            
+            // 從物體頂部開始繪製
+            ctx.moveTo(objectTopX, objectTop);
+            // 連到透鏡
+            ctx.lineTo(lensX, throughY);
+            
+            if (Math.abs(state.objectDistance) < state.focalLength) {
+                // 物體在焦點內側，形成虛像
+                // 光線穿過透鏡後平行於光軸（向左）
+                const extendX = lensX - 200; // 向左延伸
+                ctx.lineTo(extendX, throughY);
+                ctx.stroke();
+                
+                // 添加虛線部分 - 從透鏡到虛像（不添加箭頭）
+                ctx.beginPath();
+                ctx.strokeStyle = '#f39c12'; // 橙色
+                ctx.setLineDash([5, 3]); // 虛線
+                ctx.moveTo(lensX, throughY);
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置為實線
+                
+                // 物體到透鏡的箭頭
+                const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                const midY1 = objectTop + (throughY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#f39c12');
+                
+                // 左側平行光線的箭頭（實線部分）
+                const midX3 = lensX - 60;
+                drawArrow(lensX, throughY, midX3, throughY, '#f39c12');
+                
+                // 虛線部分不添加箭頭
+            } else {
+                // 物體在焦點外側，形成實像
+                // 穿過透鏡後平行於光軸（向左）
+                ctx.lineTo(imageX, throughY);
+                
+                // 沿著平行光線垂直連到像點
+                ctx.lineTo(imageX, imageTop);
+                ctx.stroke();
+                
+                // 物體到透鏡的箭頭
+                const midX1 = objectTopX - (objectTopX - lensX) * 0.5;
+                const midY1 = objectTop + (throughY - objectTop) * 0.5;
+                drawArrow(objectTopX, objectTop, midX1, midY1, '#f39c12');
+                
+                // 左側平行光線的箭頭
+                const midX3 = lensX - (lensX - imageX) * 0.5;
+                drawArrow(lensX, throughY, midX3, throughY, '#f39c12');
+                
+                // 垂直到像點的箭頭
+                if (Math.abs(throughY - imageTop) > 1) {
+                    const midY3 = throughY + (imageTop - throughY) * 0.5;
+                    drawArrow(imageX, throughY, imageX, midY3, '#f39c12');
+                }
+            }
+        }
+    }
+    
+    // Add animation effects for rays
+    if (isVirtualImage) {
+        // Add soft glow effect for virtual rays
+        ctx.shadowColor = 'rgba(113, 128, 150, 0.4)';
+        ctx.shadowBlur = 4;
+    } else {
+        // Add stronger glow effect for real rays
+        ctx.shadowColor = 'rgba(229, 62, 62, 0.5)';
+        ctx.shadowBlur = 6;
+    }
+    
+    // Reset shadow effects
+    ctx.shadowBlur = 0;
+}
+
+// 繪製光線箭頭
+function drawArrow(fromX, fromY, toX, toY, color, isDashed = false) {
+    const headLength = 10; // 增大箭頭大小使其更加明顯
+    const headWidth = Math.PI/6; // 調整箭頭寬度
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const angle = Math.atan2(dy, dx);
+    
+    // 如果是虛線箭頭，設置虛線樣式
+    if (isDashed) {
+        ctx.setLineDash([5, 3]);
+    } else {
+        ctx.setLineDash([]);
+    }
+    
+    // 繪製箭頭線段
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+    
+    // 繪製箭頭頭部
+    ctx.beginPath();
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(toX - headLength * Math.cos(angle - headWidth), 
+               toY - headLength * Math.sin(angle - headWidth));
+    ctx.lineTo(toX - headLength * Math.cos(angle + headWidth), 
+               toY - headLength * Math.sin(angle + headWidth));
+    ctx.closePath();
+    ctx.fill();
+    
+    // 重置為實線
+    ctx.setLineDash([]);
+}
+
+// 繪製虛線上的箭頭（簡化版本，只在虛線中間放置一個箭頭）
+function drawArrowOnDashedLine(fromX, fromY, toX, toY, color) {
+    // 繪製虛線
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 3]); // 虛線樣式
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.stroke();
+    
+    // 計算虛線中點
+    const midX = (fromX + toX) / 2;
+    const midY = (fromY + toY) / 2;
+    
+    // 箭頭參數
+    const headLength = 10;
+    const headWidth = Math.PI/6;
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const angle = Math.atan2(dy, dx);
+    
+    // 繪製中點的箭頭
+    ctx.setLineDash([]); // 實線箭頭
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(midX, midY);
+    ctx.lineTo(midX - headLength/2 * Math.cos(angle - headWidth),
+               midY - headLength/2 * Math.sin(angle - headWidth));
+    ctx.lineTo(midX - headLength/2 * Math.cos(angle + headWidth),
+               midY - headLength/2 * Math.sin(angle + headWidth));
+    ctx.closePath();
+    ctx.fill();
+    
+    // 重置為實線
+    ctx.setLineDash([]);
+}
+
+// 事件監聽器
+function setupEventListeners() {
+    // 物体选择单选按钮
+    document.querySelectorAll('input[name="object"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            state.objectType = this.value;
+            draw();
+        });
+    });
+    
+    // 物距滑块
+    const objectDistanceSlider = document.getElementById('objectDistanceSlider');
+    const objectDistanceInput = document.getElementById('objectDistanceInput');
+    const objectDistanceValue = document.getElementById('objectDistanceValue');
+    
+    objectDistanceSlider.addEventListener('input', () => updateObjectDistance(objectDistanceSlider.value));
+    objectDistanceInput.addEventListener('change', () => updateObjectDistance(objectDistanceInput.value));
+    
+    // 焦距滑块
+    const focalLengthSlider = document.getElementById('focalLengthSlider');
+    const focalLengthInput = document.getElementById('focalLengthInput');
+    const currentFocalLength = document.getElementById('currentFocalLength');
+    
+    focalLengthSlider.addEventListener('input', () => updateFocalLength(focalLengthSlider.value));
+    focalLengthInput.addEventListener('change', () => updateFocalLength(focalLengthInput.value));
+    
+    // 透镜位置滑块
+    const lensPositionSlider = document.getElementById('lensPositionSlider');
+    const lensPositionInput = document.getElementById('lensPositionInput');
+    const lensPositionValue = document.getElementById('lensPositionValue');
+    
+    lensPositionSlider.addEventListener('input', () => updateLensPosition(lensPositionSlider.value));
+    lensPositionInput.addEventListener('change', () => updateLensPosition(lensPositionInput.value));
+    
+    // 光线规则复选框
+    document.getElementById('rule1').addEventListener('change', function() {
+        state.rules.rule1 = this.checked;
+        draw();
+    });
+    
+    document.getElementById('rule2').addEventListener('change', function() {
+        state.rules.rule2 = this.checked;
+        draw();
+    });
+    
+    document.getElementById('rule3').addEventListener('change', function() {
+        state.rules.rule3 = this.checked;
+        draw();
+    });
+    
+    // 显示选项复选框
+    document.getElementById('showGrid').addEventListener('change', function() {
+        state.showGrid = this.checked;
+        draw();
+    });
+    
+    document.getElementById('showMeasurements').addEventListener('change', function() {
+        state.showMeasurements = this.checked;
+        // 當重新啟用測量時，確保立即更新數據
+        if (state.showMeasurements) {
+            updateMeasurements();
+        }
+        draw();
+    });
+    
+    document.getElementById('showImage').addEventListener('change', function() {
+        state.showImage = this.checked;
+        draw();
+    });
+}
+
+// 更新物距的函数 - 移到全局作用域
+function updateObjectDistance(value) {
+    value = parseFloat(value);
+    
+    // 限制在允许范围内
+    if (value < -30) value = -30;
+    if (value > 30) value = 30;
+    
+    // 更新状态和UI
+    state.objectDistance = parseFloat(value.toFixed(1));
+    state.objectPosition = state.lensPosition - state.objectDistance;
+    
+    // 更新所有相关UI元素
+    const objectDistanceSlider = document.getElementById('objectDistanceSlider');
+    const objectDistanceInput = document.getElementById('objectDistanceInput');
+    const objectDistanceValue = document.getElementById('objectDistanceValue');
+    
+    objectDistanceSlider.value = value;
+    objectDistanceInput.value = value;
+    objectDistanceValue.textContent = value.toFixed(1) + ' cm';
+    
+    // 更新测量数据并重绘
+    updateMeasurements();
+    draw();
+}
+
+// 更新焦距的函数 - 移到全局作用域
+function updateFocalLength(value) {
+    value = parseFloat(value);
+    
+    // 限制在允许范围内
+    if (value < 3) value = 3;
+    if (value > 15) value = 15;
+    
+    // 更新状态和UI
+    state.focalLength = parseFloat(value.toFixed(1));
+    
+    // 更新所有相关UI元素
+    const focalLengthSlider = document.getElementById('focalLengthSlider');
+    const focalLengthInput = document.getElementById('focalLengthInput');
+    const currentFocalLength = document.getElementById('currentFocalLength');
+    
+    focalLengthSlider.value = value;
+    focalLengthInput.value = value;
+    currentFocalLength.textContent = value.toFixed(1) + ' cm';
+    
+    // 更新测量数据并重绘
+    updateMeasurements();
+    draw();
+}
+
+// 更新透镜位置的函数 - 移到全局作用域
+function updateLensPosition(value) {
+    value = parseFloat(value);
+    
+    // 限制在允许范围内
+    if (value < -15) value = -15;
+    if (value > 15) value = 15;
+    
+    // 更新状态和UI
+    state.lensPosition = parseFloat(value.toFixed(1));
+    state.objectDistance = state.lensPosition - state.objectPosition;
+    
+    // 更新所有相关UI元素
+    const lensPositionSlider = document.getElementById('lensPositionSlider');
+    const lensPositionInput = document.getElementById('lensPositionInput');
+    const lensPositionValue = document.getElementById('lensPositionValue');
+    
+    lensPositionSlider.value = value;
+    lensPositionInput.value = value;
+    lensPositionValue.textContent = value.toFixed(1) + ' cm';
+    
+    // 更新测量数据并重绘
+    updateMeasurements();
+    draw();
+}
+
+// 添加UI交互处理函数
+function setupUIInteractions() {
+    // 侧边折叠面板控制
+    const togglePanelBtn = document.querySelector('.toggle-panel');
+    const controlPanel = document.querySelector('.control-panel');
+    
+    togglePanelBtn.addEventListener('click', () => {
+        controlPanel.classList.toggle('collapsed');
+        // 更新按钮图标方向
+        const icon = togglePanelBtn.querySelector('i');
+        if (controlPanel.classList.contains('collapsed')) {
+            icon.classList.remove('fa-chevron-left');
+            icon.classList.add('fa-chevron-right');
+        } else {
+            icon.classList.remove('fa-chevron-right');
+            icon.classList.add('fa-chevron-left');
+        }
+        // 调整后重新绘制
+        setTimeout(resizeCanvas, 300); // 等待过渡效果完成
+    });
+    
+    // 数据卡片展开/折叠控制
+    const expandCardBtn = document.querySelector('.expand-card');
+    const dataCard = document.querySelector('.data-card');
+    
+    expandCardBtn.addEventListener('click', () => {
+        dataCard.classList.toggle('expanded');
+        // 更新按钮图标
+        const icon = expandCardBtn.querySelector('i');
+        if (dataCard.classList.contains('expanded')) {
+            icon.classList.remove('fa-expand-alt');
+            icon.classList.add('fa-compress-alt');
+        } else {
+            icon.classList.remove('fa-compress-alt');
+            icon.classList.add('fa-expand-alt');
+        }
+    });
+    
+    // 数值调整按钮控制
+    const valueAdjustBtns = document.querySelectorAll('.value-adjust-btn');
+    
+    valueAdjustBtns.forEach(btn => {
+        // 鼠标点击事件 - 简化为单击模式
+        btn.addEventListener('click', function(e) {
+            // 阻止事件冒泡和默认行为
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // 获取目标参数和增减方向
+            const target = this.getAttribute('data-target');
+            const isIncrease = this.classList.contains('increase');
+            
+            console.log(`按钮点击: ${target}, 增加: ${isIncrease}`); // 调试日志
+            
+            // 单次调整值
+            adjustValue(target, isIncrease);
+        });
+        
+        // 触摸事件 - 简化为单击模式
+        btn.addEventListener('touchstart', function(e) {
+            // 阻止事件冒泡和默认行为
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        
+        // 触摸结束时执行一次调整
+        btn.addEventListener('touchend', function(e) {
+            // 阻止事件冒泡和默认行为
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // 获取目标参数和增减方向
+            const target = this.getAttribute('data-target');
+            const isIncrease = this.classList.contains('increase');
+            
+            console.log(`触摸按钮: ${target}, 增加: ${isIncrease}`); // 调试日志
+            
+            // 单次调整值
+            adjustValue(target, isIncrease);
+        });
+    });
+    
+    // 处理数值调整的函数
+    function adjustValue(target, isIncrease) {
+        // 步长固定为0.1cm
+        const step = 0.1;
+        
+        let value, minValue, maxValue;
+        
+        switch(target) {
+            case 'objectDistance':
+                value = parseFloat(document.getElementById('objectDistanceInput').value);
+                minValue = -30;
+                maxValue = 30;
+                break;
+                
+            case 'focalLength':
+                value = parseFloat(document.getElementById('focalLengthInput').value);
+                minValue = 3;
+                maxValue = 15;
+                break;
+                
+            case 'lensPosition':
+                value = parseFloat(document.getElementById('lensPositionInput').value);
+                minValue = -15;
+                maxValue = 15;
+                break;
+        }
+        
+        // 计算新值（确保步长为0.1）
+        let newValue = isIncrease ? value + step : value - step;
+        
+        // 确保没有浮点精度问题
+        newValue = Math.round(newValue * 10) / 10;
+        
+        // 确保在允许范围内
+        if (newValue >= minValue && newValue <= maxValue) {
+            console.log(`调整 ${target} 从 ${value} 到 ${newValue}`); // 调试
+            
+            // 使用全局更新函数
+            if (target === 'objectDistance') {
+                updateObjectDistance(newValue);
+            } else if (target === 'focalLength') {
+                updateFocalLength(newValue);
+            } else if (target === 'lensPosition') {
+                updateLensPosition(newValue);
+            }
+        }
+    }
+}
+
+// 添加键盘辅助功能
+function setupKeyboardSupport() {
+    // 为每个数值输入框添加键盘上下箭头支持
+    const numberInputs = [
+        { id: 'objectDistanceInput', target: 'objectDistance' },
+        { id: 'focalLengthInput', target: 'focalLength' },
+        { id: 'lensPositionInput', target: 'lensPosition' }
+    ];
+
+    numberInputs.forEach(input => {
+        const inputElement = document.getElementById(input.id);
+        if (!inputElement) return;
+
+        inputElement.addEventListener('keydown', (e) => {
+            // 上箭头键增加0.1，下箭头键减少0.1
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault(); // 阻止默认滚动行为
+                const isIncrease = e.key === 'ArrowUp';
+                
+                // 直接调用全局更新函数
+                const step = 0.1;
+                const value = parseFloat(inputElement.value);
+                const newValue = isIncrease ? value + step : value - step;
+                const roundedValue = Math.round(newValue * 10) / 10;
+                
+                if (input.target === 'objectDistance') {
+                    updateObjectDistance(roundedValue);
+                } else if (input.target === 'focalLength') {
+                    updateFocalLength(roundedValue);
+                } else if (input.target === 'lensPosition') {
+                    updateLensPosition(roundedValue);
+                }
+            }
+        });
+    });
+}
+
+// 更新初始化函数以包含键盘支持
+function init() {
+    // 设置事件监听器
+    setupEventListeners();
+    
+    // 设置UI交互
+    setupUIInteractions();
+    
+    // 设置键盘辅助功能
+    setupKeyboardSupport();
+    
+    // 设置初始值
+    document.getElementById('objectDistanceSlider').value = state.objectDistance;
+    document.getElementById('objectDistanceInput').value = state.objectDistance;
+    document.getElementById('objectDistanceValue').textContent = state.objectDistance.toFixed(1) + ' cm';
+    
+    document.getElementById('focalLengthSlider').value = state.focalLength;
+    document.getElementById('focalLengthInput').value = state.focalLength;
+    document.getElementById('currentFocalLength').textContent = state.focalLength.toFixed(1) + ' cm';
+    
+    document.getElementById('lensPositionSlider').value = state.lensPosition;
+    document.getElementById('lensPositionInput').value = state.lensPosition;
+    document.getElementById('lensPositionValue').textContent = state.lensPosition.toFixed(1) + ' cm';
+    
+    // 设置物体类型
+    const radioButtons = document.querySelectorAll('input[name="object"]');
+    radioButtons.forEach(radio => {
+        if (radio.value === state.objectType) {
+            radio.checked = true;
+        }
+    });
+    
+    // 初始更新测量数据
+    updateMeasurements();
+    
+    // 确保画布大小正确
+    resizeCanvas();
+    
+    // 绘制模拟器
+        draw();
+    
+    // 开始动画循环
+    animationLoop();
+    
+    // 功能：动画循环，使光线看起来更有活力
+    function animationLoop() {
+        requestAnimationFrame(animationLoop);
+        // 重绘可以在这里添加，如果需要连续的动画效果
+    }
+}
+
+// 在頁面加載完成後初始化
+// Initialize after page load
+window.addEventListener('load', init); 

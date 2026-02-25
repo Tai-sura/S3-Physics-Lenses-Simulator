@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>透鏡模擬器測試 - Bundle of Light Rays</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .feature-list {
+            list-style-type: none;
+            padding: 0;
+        }
+        .feature-list li {
+            padding: 10px;
+            margin: 5px 0;
+            background: #e8f4fd;
+            border-left: 4px solid #3182ce;
+            border-radius: 4px;
+        }
+        .success {
+            background: #f0fff4;
+            border-left-color: #38a169;
+        }
+        .link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #3182ce;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .link:hover {
+            background: #2c5aa0;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🔬 透鏡模擬器 - Bundle of Light Rays 功能測試</h1>
+        
+        <h2>✅ 已實現的功能：</h2>
+        <ul class="feature-list">
+            <li class="success">✓ 在左側面板顯示選項中添加了"Bundle of Light Rays"選項</li>
+            <li class="success">✓ 添加了中英文標籤：光束 / Bundle of Light Rays</li>
+            <li class="success">✓ 使用了適當的圖標 (fas fa-search-plus)</li>
+            <li class="success">✓ 實現了光束繪製函數 drawBundleRays()</li>
+            <li class="success">✓ 支持凸透鏡和凹透鏡的光束效果</li>
+            <li class="success">✓ 區分實像和虛像的光束顏色</li>
+            <li class="success">✓ 添加了特殊的金黃色樣式效果</li>
+            <li class="success">✓ 集成到主繪製循環中</li>
+        </ul>
+
+        <h2>🎯 功能特點：</h2>
+        <ul class="feature-list">
+            <li>📊 <strong>多條光線：</strong>每個光束包含12條光線，模擬真實的光束效果</li>
+            <li>🎨 <strong>顏色區分：</strong>實像光束為橙色，虛像光束為淡金色</li>
+            <li>🔍 <strong>物理準確：</strong>遵循光學折射定律</li>
+            <li>✨ <strong>視覺效果：</strong>包含發光效果和聚焦點標記</li>
+            <li>🎛️ <strong>可控制：</strong>可通過複選框開啟/關閉顯示</li>
+        </ul>
+
+        <h2>🧪 測試步驟：</h2>
+        <ol>
+            <li>打開主模擬器頁面</li>
+            <li>在左側面板找到"顯示選項"區塊</li>
+            <li>確認"光束 Bundle of Light Rays"選項存在且默認開啟</li>
+            <li>調整物距、焦距等參數觀察光束變化</li>
+            <li>切換透鏡類型（凸透鏡/凹透鏡）測試不同效果</li>
+            <li>開啟/關閉光束顯示驗證控制功能</li>
+        </ol>
+
+        <a href="index.html" class="link">🚀 打開透鏡模擬器</a>
+    </div>
+</body>
+</html> 
